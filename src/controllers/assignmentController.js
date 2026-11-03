@@ -1,6 +1,7 @@
 const AuditAssignment = require('../models/AuditAssignment');
 const AuditTemplate = require('../models/AuditTemplate');
 const AuditTemplateVersion = require('../models/AuditTemplateVersion');
+const AuditType = require('../models/AuditType');
 const AuditActivityLog = require('../models/AuditActivityLog');
 const User = require('../models/User');
 const Plant = require('../models/Plant');
@@ -42,9 +43,10 @@ exports.getAssignments = async (req, res, next) => {
     const assignments = await AuditAssignment.find(query)
       .populate('company', 'name code industry')
       .populate('plant', 'name code city state')
-      .populate('assignedEmployee', 'employeeId fullName email phone')
+      .populate('assignedEmployee', 'employeeId fullName email phone role')
       .populate('reviewer', 'employeeId fullName email')
       .populate('template', 'name code version')
+      .populate('auditTypeId', 'name code totalQuestions')
       .sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -92,12 +94,19 @@ exports.getAssignmentById = async (req, res, next) => {
 
 exports.createAssignment = async (req, res, next) => {
   try {
-    const { company, plant, templateId, assignedEmployee, reviewer, auditType, startDate, dueDate, instructions } = req.body;
+    const { company, plant, templateId, assignedEmployee, reviewer, auditType, auditTypeId, startDate, dueDate, instructions } = req.body;
 
-    if (!company || !plant || !templateId || !assignedEmployee || !dueDate) {
+    if (!company || !plant || !assignedEmployee || !dueDate) {
       return res.status(400).json({
         success: false,
-        message: 'Company, Plant, Template, Assigned Employee, and Due Date are required.',
+        message: 'Company, Plant, Assigned Employee, and Due Date are required.',
+      });
+    }
+
+    if (!templateId && !auditTypeId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Either an Audit Type or an Audit Template must be specified.',
       });
     }
 
@@ -113,7 +122,7 @@ exports.createAssignment = async (req, res, next) => {
       });
     }
 
-    // Verify assigned employee exists and is active
+    // Verify assigned employee exists and is active (can be Field Auditor, Admin, or Super Admin)
     const employeeDoc = await User.findById(assignedEmployee);
     if (!employeeDoc || employeeDoc.status !== 'Active') {
       return res.status(400).json({
@@ -126,21 +135,114 @@ exports.createAssignment = async (req, res, next) => {
     const totalAssignments = await AuditAssignment.countDocuments();
     const auditReference = `AUD-${String(totalAssignments + 1).padStart(6, '0')}`;
 
-    const template = await AuditTemplate.findById(templateId);
+    // Resolve base template (for schema compliance & framework reference)
+    let template = null;
+    if (templateId) {
+      template = await AuditTemplate.findById(templateId);
+    }
+    if (!template && auditTypeId) {
+      template = (await AuditTemplate.findOne({ status: 'Active' })) || (await AuditTemplate.findOne());
+    }
     if (!template) {
-      return res.status(404).json({ success: false, message: 'Audit template not found' });
+      return res.status(404).json({ success: false, message: 'Audit template not found.' });
     }
 
-    // Get latest template version snapshot
-    let snapshot = await AuditTemplateVersion.findOne({
-      templateId: template._id,
-      versionNumber: template.version || 1,
-    });
+    let snapshot = null;
+    let resolvedAuditTypeName = auditType || 'Comprehensive Plant Audit';
+    let resolvedAuditTypeId = auditTypeId || null;
 
-    if (!snapshot) {
-      // Fallback to any snapshot for this template
-      snapshot = await AuditTemplateVersion.findOne({ templateId: template._id });
+    // REQUIREMENT 2: If an AuditType is selected, it is AUTHORITATIVE for determining the questionnaire
+    if (auditTypeId) {
+      const auditTypeDoc = await AuditType.findById(auditTypeId).populate({
+        path: 'sections.questions.questionRef',
+        select: 'questionId questionText alternateText indent source isSuggested answerType options unit isRequired helpText',
+      });
+
+      if (!auditTypeDoc) {
+        return res.status(404).json({
+          success: false,
+          message: 'Specified Audit Type not found.',
+        });
+      }
+
+      if (auditTypeDoc.status === 'Inactive') {
+        return res.status(400).json({
+          success: false,
+          message: 'The selected Audit Type is inactive and cannot be assigned.',
+        });
+      }
+
+      const totalQ = (auditTypeDoc.sections || []).reduce((sum, s) => sum + (s.questions?.length || 0), 0);
+
+      // REQUIREMENT 1: Empty Audit Type Defense
+      // If an Audit Type contains zero questions, prevent commissioning the audit.
+      // Must NOT fall back to master questionnaire.
+      if (totalQ === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'This Audit Type has no questions. Please add questions before assigning the audit.',
+        });
+      }
+
+      resolvedAuditTypeName = auditTypeDoc.name;
+      resolvedAuditTypeId = auditTypeDoc._id;
+
+      // Build immutable snapshot sections SOLELY from auditTypeDoc questions (template cannot introduce conflicting questions)
+      const snapshotSections = (auditTypeDoc.sections || []).map((sec, secIdx) => ({
+        sectionCode: sec.sectionCode,
+        sectionName: sec.sectionName,
+        fullName: `${sec.sectionCode}. ${sec.sectionName}`,
+        order: sec.order || secIdx + 1,
+        questions: (sec.questions || []).map((q, qIdx) => {
+          const qDoc = q.questionRef || {};
+          return {
+            questionId: q.questionId || qDoc.questionId,
+            questionMongoId: qDoc._id || q.questionRef,
+            questionText: qDoc.questionText || '',
+            alternateText: qDoc.alternateText || '',
+            indent: qDoc.indent || 0,
+            source: qDoc.source || 'custom',
+            isSuggested: qDoc.isSuggested || false,
+            answerType: qDoc.answerType || 'long-text',
+            options: qDoc.options || [],
+            unit: qDoc.unit || '',
+            isRequired: q.isRequired || qDoc.isRequired || false,
+            helpText: qDoc.helpText || '',
+            order: q.order || qIdx + 1,
+          };
+        }),
+      }));
+
+      snapshot = await AuditTemplateVersion.create({
+        templateId: template._id,
+        versionNumber: Date.now(), // Unique version timestamp
+        name: `${resolvedAuditTypeName} Snapshot (${auditReference})`,
+        snapshotData: {
+          sections: snapshotSections,
+          totalQuestions: totalQ,
+        },
+        createdBy: req.user._id,
+      });
+    } else {
+      // REQUIREMENT 1: Legacy Fallback ONLY where required for legacy audits without an auditTypeId
+      snapshot = await AuditTemplateVersion.findOne({
+        templateId: template._id,
+        versionNumber: template.version || 1,
+      });
+
+      if (!snapshot) {
+        snapshot = await AuditTemplateVersion.findOne({ templateId: template._id });
+      }
+
+      if (!snapshot) {
+        return res.status(404).json({
+          success: false,
+          message: 'Audit template snapshot not found.',
+        });
+      }
     }
+
+    const firstSectionCode = snapshot?.snapshotData?.sections?.[0]?.sectionCode || 'A';
 
     // Build initial section progress
     const sectionProgress = (snapshot?.snapshotData?.sections || []).map(sec => ({
@@ -162,12 +264,13 @@ exports.createAssignment = async (req, res, next) => {
       templateSnapshot: snapshot?._id,
       assignedEmployee,
       reviewer: reviewer || undefined,
-      auditType: auditType || 'Comprehensive Plant Audit',
+      auditType: resolvedAuditTypeName,
+      auditTypeId: resolvedAuditTypeId,
       startDate: startDate || new Date(),
       dueDate,
       instructions: instructions || '',
       status: 'Not Started',
-      currentSection: 'A',
+      currentSection: firstSectionCode,
       statusHistory: [
         {
           status: 'Not Started',
@@ -180,7 +283,10 @@ exports.createAssignment = async (req, res, next) => {
       progress: {
         totalQuestions: snapshot?.snapshotData?.totalQuestions || template.totalQuestions,
         answeredQuestions: 0,
-        requiredTotal: 0,
+        requiredTotal: (snapshot?.snapshotData?.sections || []).reduce(
+          (acc, s) => acc + s.questions.filter(q => q.isRequired).length,
+          0
+        ),
         requiredAnswered: 0,
         percentage: 0,
         sectionProgress,

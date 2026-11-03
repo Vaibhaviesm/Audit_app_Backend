@@ -96,8 +96,13 @@ const auditAssignmentSchema = new mongoose.Schema({
   },
   auditType: {
     type: String,
-    enum: ['Comprehensive Plant Audit', 'Pre-Acquisition Due Diligence', 'Annual Quality Audit', 'Safety & Environmental Audit', 'Operational Excellence Review'],
+    required: true,
+    trim: true,
     default: 'Comprehensive Plant Audit',
+  },
+  auditTypeId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'AuditType',
   },
   startDate: {
     type: Date,

@@ -18,6 +18,7 @@ const auditExecutionRoutes = require('./routes/auditExecutionRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const shareRoutes = require('./routes/shareRoutes');
+const auditTypeRoutes = require('./routes/auditTypeRoutes');
 
 const app = express();
 
@@ -123,6 +124,7 @@ app.use('/api/audit', auditExecutionRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/share', shareRoutes);
+app.use('/api/audit-types', auditTypeRoutes);
 
 // SPA fallback for HTML5 History API (if frontend bundle is hosted with backend)
 app.get('*', (req, res, next) => {
