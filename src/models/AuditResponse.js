@@ -53,6 +53,26 @@ const auditResponseSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.Mixed,
     default: '',
   },
+  rawAuditorNotes: {
+    type: String,
+    default: '',
+  },
+  aiCorrectedText: {
+    type: String,
+    default: '',
+  },
+  aiApprovalStatus: {
+    type: String,
+    enum: ['none', 'pending', 'approved', 'rejected'],
+    default: 'none',
+  },
+  aiApprovedAt: {
+    type: Date,
+  },
+  aiApprovedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
   complianceAssessment: {
     type: String,
     enum: ['Compliant', 'Non-Compliant', 'Observation', 'Not Applicable', 'Pending'],

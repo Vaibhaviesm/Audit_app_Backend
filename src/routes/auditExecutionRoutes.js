@@ -7,12 +7,16 @@ const {
   submitSection,
   submitFinalAudit,
   uploadEvidenceFile,
+  aiCorrectText,
 } = require('../controllers/auditExecutionController');
 const { protect } = require('../middleware/auth');
 const { verifyAuditAccess } = require('../middleware/auditAccess');
 const upload = require('../middleware/upload');
 
 router.use(protect);
+
+// AI grammar correction & statement enhancement
+router.post('/ai-correct', aiCorrectText);
 
 // Get audits assigned to current employee
 router.get('/my-audits', getMyAudits);

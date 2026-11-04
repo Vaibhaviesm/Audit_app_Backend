@@ -22,5 +22,10 @@ module.exports = {
     USER: process.env.SMTP_USER || '',
     PASS: process.env.SMTP_PASS || '',
     FROM: process.env.SMTP_FROM || 'ESM Plant Audit System <noreply@esm-audit.com>',
-  }
+  },
+  AI: {
+    API_KEY: process.env.AUDIT_AI_API_KEY || '',
+    MODEL: process.env.AUDIT_AI_MODEL || 'google/gemini-2.0-flash-001',
+    BASE_URL: process.env.AUDIT_AI_BASE_URL || 'https://openrouter.ai/api/v1',
+  },
 };

@@ -5,6 +5,7 @@ const Question = require('../models/Question');
 const CorrectiveAction = require('../models/CorrectiveAction');
 const AuditActivityLog = require('../models/AuditActivityLog');
 const { calculateAuditProgress } = require('../services/progressService');
+const aiGrammarService = require('../services/aiGrammarService');
 
 exports.getMyAudits = async (req, res, next) => {
   try {
@@ -112,6 +113,9 @@ exports.saveDraft = async (req, res, next) => {
         questionId,
         sectionCode,
         responseValue,
+        rawAuditorNotes,
+        aiCorrectedText,
+        aiApprovalStatus,
         complianceAssessment,
         observation,
         findingDescription,
@@ -187,6 +191,15 @@ exports.saveDraft = async (req, res, next) => {
 
       if (existing) {
         existing.responseValue = responseValue;
+        if (rawAuditorNotes !== undefined) existing.rawAuditorNotes = rawAuditorNotes;
+        if (aiCorrectedText !== undefined) existing.aiCorrectedText = aiCorrectedText;
+        if (aiApprovalStatus !== undefined) {
+          existing.aiApprovalStatus = aiApprovalStatus;
+          if (aiApprovalStatus === 'approved') {
+            existing.aiApprovedBy = req.user._id;
+            existing.aiApprovedAt = new Date();
+          }
+        }
         if (sectionCode) existing.sectionCode = sectionCode;
         if (questionRef && !existing.questionRef) existing.questionRef = questionRef;
         if (complianceAssessment) existing.complianceAssessment = complianceAssessment;
@@ -208,6 +221,11 @@ exports.saveDraft = async (req, res, next) => {
           sectionCode,
           templateVersion: audit.templateVersion || 1,
           responseValue,
+          rawAuditorNotes: rawAuditorNotes || '',
+          aiCorrectedText: aiCorrectedText || '',
+          aiApprovalStatus: aiApprovalStatus || 'none',
+          aiApprovedAt: aiApprovalStatus === 'approved' ? new Date() : undefined,
+          aiApprovedBy: aiApprovalStatus === 'approved' ? req.user._id : undefined,
           complianceAssessment: complianceAssessment || 'Pending',
           observation: observation || '',
           correctiveAction: correctiveActionId,
@@ -438,6 +456,40 @@ exports.uploadEvidenceFile = async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+};
+
+/**
+ * AI-powered grammar correction and professional statement generation
+ * POST /api/audit/ai-correct
+ */
+exports.aiCorrectText = async (req, res, next) => {
+  try {
+    const { question, originalText, checkpointId } = req.body;
+
+    if (!originalText || typeof originalText !== 'string' || !originalText.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Original observation text is required for AI correction.',
+      });
+    }
+
+    const correctedText = await aiGrammarService.correctAuditorText({
+      question: question || '',
+      originalText: originalText.trim(),
+      userId: req.user._id,
+    });
+
+    res.status(200).json({
+      success: true,
+      correctedText,
+      checkpointId: checkpointId || undefined,
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to generate AI correction.',
+    });
   }
 };
 
