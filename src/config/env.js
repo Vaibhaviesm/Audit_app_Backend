@@ -25,7 +25,7 @@ module.exports = {
   },
   AI: {
     API_KEY: process.env.AUDIT_AI_API_KEY || '',
-    MODEL: process.env.AUDIT_AI_MODEL || 'google/gemini-2.0-flash-001',
+    MODEL: process.env.AUDIT_AI_MODEL || 'google/gemini-2.5-flash',
     BASE_URL: process.env.AUDIT_AI_BASE_URL || 'https://openrouter.ai/api/v1',
   },
 };

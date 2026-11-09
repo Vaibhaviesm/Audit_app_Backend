@@ -2,6 +2,7 @@ const Question = require('../models/Question');
 const QuestionSection = require('../models/QuestionSection');
 const AuditTemplate = require('../models/AuditTemplate');
 const AuditTemplateVersion = require('../models/AuditTemplateVersion');
+const AuditType = require('../models/AuditType');
 const { getOriginalQuestionId } = require('../utils/questionDisplay');
 
 exports.getSections = async (req, res, next) => {
@@ -73,7 +74,7 @@ exports.createSection = async (req, res, next) => {
 
 exports.getQuestions = async (req, res, next) => {
   try {
-    const { section, search, source, isSuggested, answerType, includeArchived, status } = req.query;
+    const { section, search, source, isSuggested, answerType, includeArchived, status, auditTypeId } = req.query;
     const query = {};
 
     if (!includeArchived || includeArchived === 'false') {
@@ -100,6 +101,27 @@ exports.getQuestions = async (req, res, next) => {
       query.answerType = answerType;
     }
 
+    if (auditTypeId && auditTypeId !== 'ALL') {
+      const targetAuditType = await AuditType.findById(auditTypeId);
+      if (targetAuditType && targetAuditType.sections) {
+        const questionRefs = [];
+        const questionIds = [];
+        targetAuditType.sections.forEach((sec) => {
+          (sec.questions || []).forEach((q) => {
+            if (q.questionRef) questionRefs.push(q.questionRef);
+            if (q.questionId) questionIds.push(q.questionId);
+          });
+        });
+        query.$and = query.$and || [];
+        query.$and.push({
+          $or: [
+            { _id: { $in: questionRefs } },
+            { questionId: { $in: questionIds } },
+          ],
+        });
+      }
+    }
+
     if (search) {
       const cleanSearch = search.trim();
       const mappedOriginalId = getOriginalQuestionId(cleanSearch);
@@ -112,7 +134,11 @@ exports.getQuestions = async (req, res, next) => {
       if (mappedOriginalId && mappedOriginalId.toUpperCase() !== cleanSearch.toUpperCase()) {
         searchConditions.push({ questionId: mappedOriginalId });
       }
-      query.$or = searchConditions;
+      if (query.$and) {
+        query.$and.push({ $or: searchConditions });
+      } else {
+        query.$or = searchConditions;
+      }
     }
 
     const questions = await Question.find(query)
