@@ -24,7 +24,7 @@ exports.getDashboardStats = async (req, res, next) => {
     ] = await Promise.all([
       Company.countDocuments(companyId ? { _id: companyId } : {}),
       Plant.countDocuments(companyId ? { company: companyId } : {}),
-      User.countDocuments({ role: { $in: ['Auditor/Employee', 'Reviewer'] } }),
+    User.countDocuments({ role: { $in: ['Super Admin', 'Admin', 'Auditor/Employee', 'Reviewer'] } }),
       AuditAssignment.countDocuments(auditQuery),
       AuditAssignment.countDocuments({ ...auditQuery, status: 'Not Started' }),
       AuditAssignment.countDocuments({ ...auditQuery, status: 'In Progress' }),
