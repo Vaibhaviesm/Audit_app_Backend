@@ -54,6 +54,18 @@ exports.getDashboardStats = async (req, res, next) => {
       { name: 'Approved', value: approvedAudits, color: '#16a34a' },
     ];
 
+    // Overdue audits list
+    const overdueAuditsList = await AuditAssignment.find({
+      ...auditQuery,
+      dueDate: { $lt: new Date() },
+      status: { $nin: ['Approved', 'Submitted'] },
+    })
+      .select('auditReference dueDate status company plant assignedEmployee')
+      .populate('company', 'name code')
+      .populate('plant', 'name city')
+      .sort({ dueDate: 1 })
+      .limit(5);
+
     // Recent audits
     const recentAudits = await AuditAssignment.find(auditQuery)
       .populate('company', 'name code')
@@ -75,6 +87,7 @@ exports.getDashboardStats = async (req, res, next) => {
         submittedAudits,
         approvedAudits,
         overdueAudits,
+        overdueAuditsList,
         criticalFindings,
         avgCompletion,
         statusCounts,

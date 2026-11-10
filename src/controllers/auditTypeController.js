@@ -334,10 +334,10 @@ exports.addQuestionsFromBank = async (req, res, next) => {
   try {
     const { sectionCode, questionIds } = req.body;
 
-    if (!sectionCode || !Array.isArray(questionIds) || questionIds.length === 0) {
+    if (!Array.isArray(questionIds) || questionIds.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'Section code and a list of question IDs are required.',
+        message: 'A list of question IDs is required.',
       });
     }
 
@@ -346,30 +346,46 @@ exports.addQuestionsFromBank = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Audit type not found' });
     }
 
-    let section = auditType.sections.find((s) => s.sectionCode === sectionCode.toUpperCase().trim());
-    if (!section) {
-      // Find section name from QuestionSection if possible
-      const secDoc = await QuestionSection.findOne({ code: sectionCode.toUpperCase().trim() });
-      const newSec = {
-        sectionCode: sectionCode.toUpperCase().trim(),
-        sectionName: secDoc ? (secDoc.name || secDoc.fullName) : `Section ${sectionCode.toUpperCase().trim()}`,
-        order: auditType.sections.length + 1,
-        questions: [],
-      };
-      auditType.sections.push(newSec);
-      section = auditType.sections[auditType.sections.length - 1];
-    }
-
     // Fetch questions from Question collection
+    const idStrings = questionIds.map((id) => (typeof id === 'string' ? id : String(id)));
+    const validMongoIds = idStrings.filter((id) => /^[0-9a-fA-F]{24}$/.test(id));
+
     const questionsToAdd = await Question.find({
       $or: [
-        { _id: { $in: questionIds.filter((id) => id.match && id.match(/^[0-9a-fA-F]{24}$/)) } },
-        { questionId: { $in: questionIds } },
+        { _id: { $in: validMongoIds } },
+        { questionId: { $in: idStrings } },
       ],
     });
 
+    if (questionsToAdd.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No matching questions found in the Question Bank.',
+      });
+    }
+
     let addedCount = 0;
-    questionsToAdd.forEach((q) => {
+
+    for (const q of questionsToAdd) {
+      // If sectionCode is specified, use it. Otherwise place question in its own native section.
+      const targetSecCode = (sectionCode && sectionCode.trim())
+        ? sectionCode.toUpperCase().trim()
+        : (q.sectionCode ? q.sectionCode.toUpperCase().trim() : 'A');
+
+      let section = auditType.sections.find((s) => s.sectionCode === targetSecCode);
+      if (!section) {
+        // Find section name from QuestionSection if possible
+        const secDoc = await QuestionSection.findOne({ code: targetSecCode });
+        const newSec = {
+          sectionCode: targetSecCode,
+          sectionName: secDoc ? (secDoc.name || secDoc.fullName) : `Section ${targetSecCode}`,
+          order: auditType.sections.length + 1,
+          questions: [],
+        };
+        auditType.sections.push(newSec);
+        section = auditType.sections[auditType.sections.length - 1];
+      }
+
       const alreadyExists = section.questions.some(
         (existing) => existing.questionId === q.questionId || String(existing.questionRef) === String(q._id)
       );
@@ -383,13 +399,13 @@ exports.addQuestionsFromBank = async (req, res, next) => {
         });
         addedCount++;
       }
-    });
+    }
 
     await auditType.save();
 
     res.status(200).json({
       success: true,
-      message: `Added ${addedCount} question(s) to Section ${sectionCode}.`,
+      message: `Added ${addedCount} question(s) to ${auditType.name}.`,
       data: auditType,
     });
   } catch (error) {
